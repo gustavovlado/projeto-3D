@@ -1,0 +1,207 @@
+import bpy
+import math
+
+# Limpa cena
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+# Cria o shape do símbolo Robux (hexágono com furo central)
+# Baseado em um losango com furo (simplificado para fins do exemplo)
+
+def create_robux_shape():
+    verts = [
+        (1, 0, 0),       # vértices do losango externo
+        (0.5, 0.866, 0),
+        (-0.5, 0.866, 0),
+        (-1, 0, 0),
+        (-0.5, -0.866, 0),
+        (0.5, -0.866, 0),
+    ]
+    holes = [
+        (0.25, 0, 0),    # vértices do losango interno (furo)
+        (0.125, 0.2165, 0),
+        (-0.125, 0.2165, 0),
+        (-0.25, 0, 0),
+        (-0.125, -0.2165, 0),
+        (0.125, -0.2165, 0),
+    ]
+    # Criar malha com furo usando bmesh para topologia correta
+    import bmesh
+
+    mesh = bpy.data.meshes.new("RobuxMesh")
+    bm = bmesh.new()
+
+    # cria a face externa
+    outer_verts = [bm.verts.new(co) for co in verts]
+    bm.faces.new(outer_verts)
+
+    # cria o buraco
+    inner_verts = [bm.verts.new(co) for co in holes]
+    face = bm.faces.new(inner_verts)
+    face.normal_flip()
+
+    # usa face com furo
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
+
+    # Remove o centro para fazer o furo
+    bm.faces.ensure_lookup_table()
+    bm.faces[0].loops.ensure_lookup_table()
+    # Define o furo da face externa
+    bm.faces[0].loops[0].vert.select = True
+
+    bm.to_mesh(mesh)
+    bm.free()
+
+    # Cria objeto
+    obj = bpy.data.objects.new("Robux", mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+# Para um resultado melhor, vamos usar um cilindro extrudado com o furo
+# Vou usar uma abordagem simplificada: um cilindro hexagonal com furo hexagonal menor
+
+def create_robux_cylindrical():
+    import bmesh
+
+    mesh = bpy.data.meshes.new("RobuxMesh")
+    bm = bmesh.new()
+
+    # Cria dois hexágonos: externo e interno (furo)
+    radius_outer = 1.0
+    radius_inner = 0.5
+    height = 0.2
+
+    verts_outer_top = []
+    verts_outer_bottom = []
+    verts_inner_top = []
+    verts_inner_bottom = []
+
+    for i in range(6):
+        angle = math.radians(60 * i - 30)  # rotaciona 30° para alinhar os vértices
+        x_outer = radius_outer * math.cos(angle)
+        y_outer = radius_outer * math.sin(angle)
+        x_inner = radius_inner * math.cos(angle)
+        y_inner = radius_inner * math.sin(angle)
+
+        verts_outer_top.append(bm.verts.new((x_outer, y_outer, height/2)))
+        verts_outer_bottom.append(bm.verts.new((x_outer, y_outer, -height/2)))
+        verts_inner_top.append(bm.verts.new((x_inner, y_inner, height/2)))
+        verts_inner_bottom.append(bm.verts.new((x_inner, y_inner, -height/2)))
+
+    bm.verts.ensure_lookup_table()
+
+    # Faces laterais externas
+    for i in range(6):
+        v1 = verts_outer_top[i]
+        v2 = verts_outer_top[(i+1) % 6]
+        v3 = verts_outer_bottom[(i+1) % 6]
+        v4 = verts_outer_bottom[i]
+        bm.faces.new([v1, v2, v3, v4])
+
+    # Faces laterais internas (do furo) - invertidas
+    for i in range(6):
+        v1 = verts_inner_bottom[i]
+        v2 = verts_inner_bottom[(i+1) % 6]
+        v3 = verts_inner_top[(i+1) % 6]
+        v4 = verts_inner_top[i]
+        bm.faces.new([v1, v2, v3, v4])
+
+    # Face topo com furo
+    bm.faces.new(verts_outer_top)
+    inner_face_top = bm.faces.new(verts_inner_top)
+    inner_face_top.normal_flip()
+
+    # Face base com furo
+    bm.faces.new(verts_outer_bottom)
+    inner_face_bottom = bm.faces.new(verts_inner_bottom)
+    inner_face_bottom.normal_flip()
+
+    bm.normal_update()
+    bm.to_mesh(mesh)
+    bm.free()
+
+    obj = bpy.data.objects.new("Robux", mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+# Criar o objeto
+robux_obj = create_robux_cylindrical()
+
+# Configura o material dourado metálico fosco
+mat = bpy.data.materials.new(name="GoldMat")
+mat.use_nodes = True
+nodes = mat.node_tree.nodes
+links = mat.node_tree.links
+
+# Limpa nodes
+for n in nodes:
+    nodes.remove(n)
+
+# Adiciona nodes principais
+output = nodes.new(type='ShaderNodeOutputMaterial')
+principled = nodes.new(type='ShaderNodeBsdfPrincipled')
+
+principled.inputs['Base Color'].default_value = (1.0, 0.766, 0.336, 1)  # dourado
+principled.inputs['Metallic'].default_value = 0.8
+principled.inputs['Roughness'].default_value = 0.4  # fosco suave
+
+links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+
+robux_obj.data.materials.append(mat)
+
+# Ajusta origem para o centro do objeto
+bpy.context.view_layer.objects.active = robux_obj
+bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='MEDIAN')
+
+# Animação: rotação e flutuação suave
+robux_obj.rotation_mode = 'XYZ'
+
+# Cria keyframes para rotação e localização vertical (Z)
+scene = bpy.context.scene
+scene.frame_start = 1
+scene.frame_end = 240  # 10 segundos a 24 fps, para 20 segundos por volta (usaremos frame_step 2)
+
+# Rotação: 360° em 480 frames = 20 segundos a 24 fps
+# Como temos 240 frames, vamos animar metade da rotação (180°) para fazer loop no modo cyclic extrapolation e velocidade ajustada
+
+# Keyframe inicial
+robux_obj.rotation_euler = (0, 0, 0)
+robux_obj.keyframe_insert(data_path="rotation_euler", frame=1)
+
+# Keyframe final para rotação (360 graus no eixo Z)
+robux_obj.rotation_euler = (0, 0, 2 * math.pi)
+robux_obj.keyframe_insert(data_path="rotation_euler", frame=481)
+
+# Flutuação vertical (z)
+import mathutils
+
+# Subida (frame 1)
+robux_obj.location.z = 0
+robux_obj.keyframe_insert(data_path="location", frame=1)
+
+# Pico (frame 60) — sobe 0.2 unidades
+robux_obj.location.z = 0.2
+robux_obj.keyframe_insert(data_path="location", frame=60)
+
+# Desce (frame 120)
+robux_obj.location.z = 0
+robux_obj.keyframe_insert(data_path="location", frame=120)
+
+# Usa Graph Editor para ciclo infinito (fcurves modifiers)
+
+def add_cycle_modifier(fcurve):
+    modifier = fcurve.modifiers.new(type='CYCLES')
+    modifier.mode_before = 'REPEAT'
+    modifier.mode_after = 'REPEAT'
+
+# Adiciona modifier para rotação Z
+for fcurve in robux_obj.animation_data.action.fcurves:
+    if fcurve.data_path == "rotation_euler" and fcurve.array_index == 2:
+        add_cycle_modifier(fcurve)
+
+# Adiciona modifier para localização Z
+for fcurve in robux_obj.animation_data.action.fcurves:
+    if fcurve.data_path == "location" and fcurve.array_index == 2:
+        add_cycle_modifier(fcurve)
+
+print("Script executado com sucesso! Modelo Robux criado e animado.")
